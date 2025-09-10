@@ -20,3 +20,21 @@ This repository contains a GitHub Actions workflow that automatically creates da
 - Automatically handles daylight saving time
 - Prevents duplicate issues for the same day
 - Each issue contains a checklist for code review activities
+
+# Code Review Notes
+
+Daily notes from code review activities. Each file corresponds to a completed daily review issue.
+
+## Structure
+
+Notes are organized by year and month:
+- `YYYY/MM-monthname/YYYY-MM-DD.md`
+
+## Template
+
+Each daily note follows the template in `template.md`.
+
+## Quick Links
+
+- [Current Month](./2025/01-january/)
+- [Template](./template.md)
