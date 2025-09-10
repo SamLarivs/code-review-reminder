@@ -1,0 +1,114 @@
+name: Daily Code Review Reminder
+
+on:
+  schedule:
+    # Run at 1:00 PM UTC (8:00 AM ET or 9:00 AM ET depending on DST)
+    # This ensures we're always within the 9:00 AM - 11:59 PM ET window
+    - cron: '0 13 * * 1-5'  # Monday-Friday only
+  workflow_dispatch: # Allow manual triggering for testing
+
+jobs:
+  create-daily-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Daily Review Issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // Function to get current date in ET
+            function getETDate() {
+              const now = new Date();
+              // Convert to ET timezone
+              const etTime = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'America/New_York',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                hour12: false
+              }).format(now);
+              
+              const [date, time] = etTime.split(', ');
+              const [month, day, year] = date.split('/');
+              const hour = parseInt(time.split(':')[0]);
+              
+              return { year, month, day, hour };
+            }
+            
+            // Function to calculate random delay in minutes
+            function getRandomDelay() {
+              const { hour } = getETDate();
+              let maxDelay;
+              
+              // Calculate how many minutes until 11:59 PM ET
+              if (hour < 9) {
+                // We're before 9 AM ET, delay to get into the 9 AM - 11:59 PM window
+                const minutesUntil9AM = (9 - hour) * 60;
+                const minutesFrom9AMto1159PM = 15 * 60 - 1; // 14:59 hours
+                maxDelay = minutesUntil9AM + minutesFrom9AMto1159PM;
+              } else if (hour >= 9 && hour < 24) {
+                // We're within the window, calculate remaining time
+                maxDelay = (24 - hour) * 60 - 1;
+              } else {
+                // Should not happen, but default to no delay
+                maxDelay = 0;
+              }
+              
+              // Random delay between 0 and maxDelay minutes
+              return Math.floor(Math.random() * Math.max(0, maxDelay));
+            }
+            
+            // Get random delay and wait
+            const delayMinutes = getRandomDelay();
+            console.log(`Waiting ${delayMinutes} minutes before creating issue...`);
+            await new Promise(resolve => setTimeout(resolve, delayMinutes * 60 * 1000));
+            
+            // Get current date after delay
+            const { year, month, day } = getETDate();
+            const dateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+            const issueTitle = `Daily code review – ${dateStr}`;
+            
+            // Check if today's issue already exists
+            const { data: existingIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              labels: 'daily,review',
+              since: new Date(new Date().setHours(0, 0, 0, 0)).toISOString()
+            });
+            
+            const issueExists = existingIssues.some(issue => issue.title === issueTitle);
+            
+            if (issueExists) {
+              console.log(`Issue for ${dateStr} already exists. Skipping...`);
+              return;
+            }
+            
+            // Create the issue
+            const issueBody = `## Daily Code Review Checklist
+            
+            - [ ] Read one PR from a teammate or OSS project
+            - [ ] Leave one actionable comment
+            - [ ] Capture notes in your notes repo and link below
+            
+            ### Notes
+            <!-- Add your review notes or links here -->
+            `;
+            
+            try {
+              const { data: newIssue } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: issueTitle,
+                body: issueBody,
+                assignees: ['SamLarivs'],
+                labels: ['daily', 'review']
+              });
+              
+              console.log(`Created issue #${newIssue.number}: ${newIssue.title}`);
+              console.log(`Issue URL: ${newIssue.html_url}`);
+            } catch (error) {
+              console.error('Error creating issue:', error);
+              throw error;
+            }
