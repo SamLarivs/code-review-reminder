@@ -57,10 +57,16 @@ jobs:
               return;
             }
             
-            // Randomly decide whether to create issue on this run
-            // Approximately 20% chance per run = high likelihood of one issue per day
-            if (Math.random() > 0.2) {
-              console.log('Skipping this run (random decision)');
+            // Progressive probability: decreases throughout the day
+            const runHours = [9, 12, 15, 18, 21, 23]; // Approximate ET hours for each run
+            const currentRunIndex = runHours.findIndex(h => Math.abs(h - hour) <= 1);
+            
+            // Start with 60% and decrease by 10% each run  
+            // Run 1: 60%, Run 2: 50%, Run 3: 40%, Run 4: 30%, Run 5: 20%, Run 6: 10%
+            const probability = 0.60 - (0.10 * currentRunIndex);
+            
+            if (Math.random() > probability) {
+              console.log(`Skipping this run (${(probability * 100).toFixed(0)}% chance declined)`);
               return;
             }
             
