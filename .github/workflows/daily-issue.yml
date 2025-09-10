@@ -2,14 +2,18 @@ name: Daily Code Review Reminder
 
 on:
   schedule:
-    # Run multiple times throughout the day (all times UTC)
-    - cron: '0 13 * * 1-5'  # 8/9 AM ET
-    - cron: '0 16 * * 1-5'  # 11 AM/12 PM ET  
-    - cron: '0 19 * * 1-5'  # 2/3 PM ET
-    - cron: '0 22 * * 1-5'  # 5/6 PM ET
-    - cron: '0 1 * * 2-6'   # 8/9 PM ET (runs Tue-Sat for Mon-Fri)
-    - cron: '0 3 * * 2-6'   # 10/11 PM ET (runs Tue-Sat for Mon-Fri)
-  workflow_dispatch: # Allow manual triggering for testing
+    # All times are UTC; comments show approximate ET windows
+    - cron: '0 13 * * 1-5'  # 9 AM ET (or 8 AM during ST/DT swings)
+    - cron: '0 16 * * 1-5'  # 12 PM ET
+    - cron: '0 19 * * 1-5'  # 3 PM ET
+    - cron: '0 22 * * 1-5'  # 6 PM ET
+    - cron: '0 1 * * 2-6'   # 9 PM ET (Tue-Sat for Mon-Fri)
+    - cron: '0 3 * * 2-6'   # 11 PM ET (Tue-Sat for Mon-Fri)
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
 
 jobs:
   create-daily-issue:
@@ -18,83 +22,74 @@ jobs:
       - name: Create Daily Review Issue
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           script: |
-            // Function to get current date in ET
-            function getETDate() {
+            // ----- Helpers -----
+            function nowInET() {
               const now = new Date();
-              // Convert to ET timezone
-              const etTime = new Intl.DateTimeFormat('en-US', {
+              const fmt = new Intl.DateTimeFormat('en-US', {
                 timeZone: 'America/New_York',
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                hour12: false,
-                weekday: 'short'
-              }).format(now);
-              
-              const parts = etTime.split(', ');
-              const dayOfWeek = parts[0];
-              const [month, day, year] = parts[1].split('/');
-              const hour = parseInt(parts[2].split(':')[0]);
-              
-              return { year, month, day, hour, dayOfWeek };
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                hour12: false, weekday: 'short'
+              });
+              const parts = fmt.formatToParts(now).reduce((acc, p) => (acc[p.type]=p.value, acc), {});
+              return {
+                year: parts.year, month: parts.month, day: parts.day,
+                hour: parseInt(parts.hour, 10),
+                weekday: parts.weekday
+              };
             }
-            
-            // Check if we should run today
-            const { dayOfWeek, hour } = getETDate();
-            
-            // Skip weekends
-            if (dayOfWeek === 'Sat' || dayOfWeek === 'Sun') {
-              console.log('Skipping: Weekend');
+
+            function etMidnightUtcIso({ year, month, day }) {
+              // Build a Date representing ET midnight and convert to UTC ISO
+              // We get the offset by formatting the ET midnight as UTC string via Date.parse workaround
+              const etMidnight = new Date(`${year}-${month}-${day}T00:00:00`);
+              // etMidnight currently interpreted in runner tz; fix by computing the ET offset:
+              const etDate = new Date(
+                new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })
+              );
+              const runnerDate = new Date();
+              const offsetMinutes = (runnerDate.getTime() - etDate.getTime()) / 60000;
+              const utcFromEtMidnight = new Date(etMidnight.getTime() + offsetMinutes * 60000);
+              return utcFromEtMidnight.toISOString();
+            }
+
+            const et = nowInET();
+            const { weekday, hour } = et;
+
+            // Skip weekends in ET
+            if (weekday === 'Sat' || weekday === 'Sun') {
+              console.log('Skipping: Weekend (ET)');
               return;
             }
-            
-            // Only run if we're within the desired window (9 AM - 11:59 PM ET)
+
+            // Only run 9:00–23:59 ET
             if (hour < 9) {
               console.log(`Skipping: Too early (${hour}:00 ET)`);
               return;
             }
-            
-            // Progressive probability: decreases throughout the day
-            const runHours = [9, 12, 15, 18, 21, 23]; // Approximate ET hours for each run
-            const currentRunIndex = runHours.findIndex(h => Math.abs(h - hour) <= 1);
-            
-            // Start with 60% and decrease by 10% each run  
-            // Run 1: 60%, Run 2: 50%, Run 3: 40%, Run 4: 30%, Run 5: 20%, Run 6: 10%
-            const probability = 0.60 - (0.10 * currentRunIndex);
-            
+
+            // Progressive probability by run window
+            const runHours = [9, 12, 15, 18, 21, 23]; // ET anchors
+            let idx = runHours.findIndex(h => Math.abs(h - hour) <= 1);
+            if (idx < 0) idx = runHours.length - 1; // fallback to last window
+            const probability = Math.max(0.1, 0.60 - 0.10 * idx);
+
             if (Math.random() > probability) {
               console.log(`Skipping this run (${(probability * 100).toFixed(0)}% chance declined)`);
               return;
             }
-            
+
             console.log('Proceeding to check/create issue...');
-            
-            // Get current date for issue title
-            const { year, month, day } = getETDate();
-            const dateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+
+            // Build title/body with ET date
+            const dateStr = `${et.year}-${et.month}-${et.day}`;
             const issueTitle = `Daily code review - ${dateStr}`;
-            
-            // Check if today's issue already exists
-            const { data: existingIssues } = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'all',
-              labels: 'daily,review',
-              since: new Date(new Date().setHours(0, 0, 0, 0)).toISOString()
-            });
-            
-            const issueExists = existingIssues.some(issue => issue.title === issueTitle);
-            
-            if (issueExists) {
-              console.log(`Issue for ${dateStr} already exists. Skipping...`);
-              return;
-            }
-            
-            // Create the issue
-            const monthName = new Date(parseInt(year), parseInt(month)-1, parseInt(day)).toLocaleDateString('en-US', { month: 'long' }).toLowerCase();
+            const monthName = new Date(parseInt(et.year), parseInt(et.month)-1, parseInt(et.day))
+              .toLocaleDateString('en-US', { month: 'long' })
+              .toLowerCase();
+
             const issueBody = [
               '## Daily Code Review Checklist',
               '',
@@ -104,22 +99,45 @@ jobs:
               '',
               '### Notes',
               '<!-- Add your review notes or links here -->',
-              `- [ ] Created notes at: \`notes/${year}/${month.padStart(2, '0')}-${monthName}/${dateStr}.md\``
+              `- [ ] Created notes at: \`notes/${et.year}/${et.month}-${monthName}/${dateStr}.md\``
             ].join('\n');
-            
-            try {
-              const { data: newIssue } = await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: issueTitle,
-                body: issueBody,
-                assignees: ['SamLarivs'],
-                labels: ['daily', 'review']
-              });
-              
-              console.log(`Created issue #${newIssue.number}: ${newIssue.title}`);
-              console.log(`Issue URL: ${newIssue.html_url}`);
-            } catch (error) {
-              console.error('Error creating issue:', error);
-              throw error;
+
+            // List today's issues by labels since ET midnight
+            const sinceIso = etMidnightUtcIso(et);
+            const { owner, repo } = context.repo;
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner, repo,
+              state: 'all',
+              labels: 'daily,review',   // must have BOTH labels
+              since: sinceIso,
+              per_page: 100
+            });
+
+            if (issues.some(i => i.title === issueTitle)) {
+              console.log(`Issue for ${dateStr} already exists. Skipping.`);
+              return;
             }
+
+            // Ensure labels exist (idempotent)
+            async function ensureLabel(name, color = 'ededed', description = '') {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+              } catch {
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
+              }
+            }
+            await ensureLabel('daily', '1d76db', 'Daily automation');
+            await ensureLabel('review', '0e8a16', 'Code review');
+
+            // Create the issue
+            const { data: newIssue } = await github.rest.issues.create({
+              owner, repo,
+              title: issueTitle,
+              body: issueBody,
+              assignees: ['SamLarivs'],
+              labels: ['daily', 'review']
+            });
+
+            console.log(`Created issue #${newIssue.number}: ${newIssue.title}`);
+            console.log(`Issue URL: ${newIssue.html_url}`);
