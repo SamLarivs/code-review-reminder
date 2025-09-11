@@ -13,7 +13,7 @@ on:
       force:
         description: 'Bypass probability & time window and create an issue now'
         type: boolean
-        default: true
+        default: false
       dry_run:
         description: 'Do everything except actually create the issue'
         type: boolean
