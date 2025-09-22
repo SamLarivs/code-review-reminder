@@ -74,7 +74,7 @@ jobs:
                 console.log('Skipping: Weekend (ET)');
                 return;
               }
-              // Time window 9:00–23:59 ET
+              // Time window 9:00-23:59 ET
               if (et.hour < 9) {
                 console.log(`Skipping: Too early (${et.hour}:00 ET)`);
                 return;
